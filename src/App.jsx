@@ -6,12 +6,10 @@ import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 /**
- * 連絡帳アプリ (Firebase統合詳細版)
+ * 連絡帳アプリ (Firebase統合詳細版 + アクセス制限)
  *
  * * 機能追加:
- * - Googleログイン/ログアウト
- * - Firestoreへのデータ保存・読み込み
- * - 日付選択（カレンダー）による過去データの参照
+ * - メールアドレスによるアクセス制限 (Allowlist)
  */
 
 // ----------------------------------------------------------------------
@@ -20,6 +18,11 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 const GRID_ROWS = 12;
 const TEXT_MAX_LENGTH = GRID_ROWS - 1;
+
+// 許可されたユーザーのメールアドレスリスト
+const ALLOWED_EMAILS = [
+  "d.a0807derude@gmail.com"
+];
 
 // デフォルトの列データ構造
 const DEFAULT_COLUMNS = [
@@ -174,8 +177,21 @@ export default function RenrakuchoApp() {
 
   // Auth Listener
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setUser(u);
+    const unsubscribe = onAuthStateChanged(auth, async (u) => {
+      if (u) {
+        // メールアドレスチェック
+        if (ALLOWED_EMAILS.includes(u.email)) {
+          setUser(u);
+        } else {
+          // 許可されていないユーザー
+          console.warn("Unauthorized user:", u.email);
+          await signOut(auth);
+          alert("このアカウントでの利用は許可されていません。");
+          setUser(null);
+        }
+      } else {
+        setUser(null);
+      }
       setLoading(false);
     });
     return () => unsubscribe();
@@ -227,10 +243,15 @@ export default function RenrakuchoApp() {
   // Handlers
   const handleLogin = async () => {
     try {
-      await signInWithPopup(auth, googleProvider);
+      const result = await signInWithPopup(auth, googleProvider);
+      // ここでもチェック（念のため）
+      if (!ALLOWED_EMAILS.includes(result.user.email)) {
+        await signOut(auth);
+        alert("このアカウントでの利用は許可されていません。");
+      }
     } catch (error) {
       console.error("Login failed", error);
-      alert("ログインに失敗しました");
+      // alert("ログインに失敗しました"); // キャンセル時なども出るのでコメントアウト
     }
   };
 
