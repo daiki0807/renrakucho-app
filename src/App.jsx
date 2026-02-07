@@ -1,15 +1,18 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { BookOpen, Download, ArrowUp, ArrowDown, User, LogIn, LogOut, Loader2, Calendar } from 'lucide-react';
+import { BookOpen, Download, ArrowUp, ArrowDown, User, LogIn, LogOut, Loader2, Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
 import { auth, googleProvider, db } from './firebase';
 import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 /**
- * 連絡帳アプリ (Firebase統合詳細版 + アクセス制限)
+ * 連絡帳アプリ (管理者・閲覧者 分離版)
  *
- * * 機能追加:
- * - メールアドレスによるアクセス制限 (Allowlist)
+ * * 変更点:
+ * - データ保存先を `class_notes/{date}` (共有) に変更
+ * - 管理者 (d.a0807derude@gmail.com) のみ編集パネルを表示
+ * - 閲覧者はプレビューと日付選択のみ可能
+ * - 日付選択をヘッダー/メインエリアに移動
  */
 
 // ----------------------------------------------------------------------
@@ -19,10 +22,8 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 const GRID_ROWS = 12;
 const TEXT_MAX_LENGTH = GRID_ROWS - 1;
 
-// 許可されたユーザーのメールアドレスリスト
-const ALLOWED_EMAILS = [
-  "d.a0807derude@gmail.com"
-];
+// 管理者のメールアドレス (これ以外は閲覧者扱い)
+const ADMIN_EMAIL = "d.a0807derude@gmail.com";
 
 // デフォルトの列データ構造
 const DEFAULT_COLUMNS = [
@@ -172,98 +173,92 @@ const DateColumn = ({ dateStr }) => {
 export default function RenrakuchoApp() {
   // State
   const [user, setUser] = useState(null); // Firebase User
+  const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true); // Auth Loading
   const [dataLoading, setDataLoading] = useState(false); // Data Fetching
 
   const [currentDate, setCurrentDate] = useState(getTodayString());
   const [columns, setColumns] = useState(DEFAULT_COLUMNS);
+  // activeTabは管理者のみ使用 (edit/preview切り替え)。閲覧者は常にpreview
   const [activeTab, setActiveTab] = useState('edit');
   const notebookRef = useRef(null);
 
   // Auth Listener
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (u) => {
-      if (u) {
-        // メールアドレスチェック
-        if (ALLOWED_EMAILS.includes(u.email)) {
-          setUser(u);
-        } else {
-          // 許可されていないユーザー
-          console.warn("Unauthorized user:", u.email);
-          await signOut(auth);
-          alert("このアカウントでの利用は許可されていません。");
-          setUser(null);
-        }
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      if (u && u.email === ADMIN_EMAIL) {
+        setIsAdmin(true);
       } else {
-        setUser(null);
+        setIsAdmin(false);
+        setActiveTab('preview'); // 管理者以外は強制的にプレビュー
       }
       setLoading(false);
     });
     return () => unsubscribe();
   }, []);
 
-  // Data Fetching
+  // Data Fetching (Shared Collection: class_notes)
   useEffect(() => {
-    if (!user) return;
+    // ログインしていなくても見れるようにする (セキュリティルールで許可前提)
+    // ただし、データ読み込みは日付が変わったタイミングなどで実行
 
-    // データ読込関数
     const loadData = async () => {
       setDataLoading(true);
       try {
-        const docRef = doc(db, "users", user.uid, "entries", currentDate);
+        // 共有コレクション 'class_notes' から取得
+        const docRef = doc(db, "class_notes", currentDate);
         const docSnap = await getDoc(docRef);
 
         if (docSnap.exists()) {
           setColumns(docSnap.data().columns);
         } else {
-          // データがない場合はデフォルトに戻す
           setColumns(DEFAULT_COLUMNS);
         }
       } catch (error) {
         console.error("Error loading document: ", error);
-        alert("データの読み込みに失敗しました");
+        // 権限エラーなどの場合はアラートを出してもいいが、
+        // 閲覧者がアクセスした瞬間にエラーが出るのを防ぐためconsoleのみにするか、
+        // "読み込めませんでした"を表示する
       } finally {
         setDataLoading(false);
       }
     };
 
     loadData();
-  }, [user, currentDate]); // ユーザーか日付が変わったら再取得
+  }, [currentDate]); // ユーザー依存を削除（誰でも同じ日付ならデータは見れる）
 
-  // Save Logic
+  // Save Logic (Admin Only)
   const saveData = async (newColumns) => {
-    if (!user) return;
+    if (!isAdmin || !user) return;
     try {
-      const docRef = doc(db, "users", user.uid, "entries", currentDate);
+      const docRef = doc(db, "class_notes", currentDate);
       await setDoc(docRef, {
         columns: newColumns,
         date: currentDate,
+        updatedBy: user.email,
         updatedAt: new Date()
       });
     } catch (error) {
       console.error("Error writing document: ", error);
+      alert("保存に失敗しました。権限を確認してください。");
     }
   };
 
   // Handlers
   const handleLogin = async () => {
     try {
-      const result = await signInWithPopup(auth, googleProvider);
-      // ここでもチェック（念のため）
-      if (!ALLOWED_EMAILS.includes(result.user.email)) {
-        await signOut(auth);
-        alert("このアカウントでの利用は許可されていません。");
-      }
+      await signInWithPopup(auth, googleProvider);
     } catch (error) {
       console.error("Login failed", error);
-      // alert("ログインに失敗しました"); // キャンセル時なども出るのでコメントアウト
     }
   };
 
   const handleLogout = async () => {
     try {
       await signOut(auth);
-      setColumns(DEFAULT_COLUMNS); // ログアウト時にリセット
+      // ログアウトしてもデータは残る（閲覧者として見るため）
+      setIsAdmin(false);
     } catch (error) {
       console.error("Logout failed", error);
     }
@@ -274,7 +269,7 @@ export default function RenrakuchoApp() {
       col.id === id ? { ...col, text: newText } : col
     );
     setColumns(newColumns);
-    saveData(newColumns); // Auto-save on change
+    saveData(newColumns);
   };
 
   const handleTypeChange = (id, newType) => {
@@ -282,7 +277,7 @@ export default function RenrakuchoApp() {
       col.id === id ? { ...col, type: newType } : col
     );
     setColumns(newColumns);
-    saveData(newColumns); // Auto-save on change
+    saveData(newColumns);
   };
 
   const moveRow = (index, direction) => {
@@ -291,7 +286,7 @@ export default function RenrakuchoApp() {
     if (targetIndex < 0 || targetIndex >= newColumns.length) return;
     [newColumns[index], newColumns[targetIndex]] = [newColumns[targetIndex], newColumns[index]];
     setColumns(newColumns);
-    saveData(newColumns); // Auto-save on change
+    saveData(newColumns);
   };
 
   const handleDownloadPDF = () => {
@@ -305,6 +300,15 @@ export default function RenrakuchoApp() {
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
     };
     html2pdf().set(opt).from(element).save();
+  };
+
+  const changeDate = (days) => {
+    const d = new Date(currentDate);
+    d.setDate(d.getDate() + days);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    setCurrentDate(`${year}-${month}-${day}`);
   };
 
   const markButtons = [
@@ -327,180 +331,176 @@ export default function RenrakuchoApp() {
     <div className="fixed inset-0 bg-neutral-100 font-sans text-slate-800 flex flex-col md:flex-row overflow-hidden">
 
       {/* ------------------------------------------------------------------
-          左側: 入力パネル
+          [共通] ヘッダー (閲覧者も日付変更できるようにする)
          ------------------------------------------------------------------ */}
-      <div className={`
-        w-full md:w-96 bg-white shadow-xl z-20 flex flex-col border-r border-slate-200 h-full
-        ${activeTab === 'preview' ? 'hidden md:flex' : 'flex'}
-      `}>
-        {/* Header */}
-        <div className="p-4 bg-indigo-600 text-white flex items-center justify-between shrink-0">
+      <div className="absolute top-0 left-0 right-0 h-14 bg-indigo-600 shadow-md z-30 flex items-center justify-between px-4 text-white">
+        <div className="flex items-center gap-4">
           <h1 className="text-lg font-bold flex items-center gap-2">
             <BookOpen size={20} />
-            デジタル連絡帳
+            <span className="hidden sm:inline">デジタル</span>連絡帳
           </h1>
-          <div className="flex items-center gap-2">
-            {user ? (
-              <button onClick={handleLogout} className="bg-white/20 hover:bg-white/30 p-2 rounded-full transition" title="ログアウト">
-                <LogOut size={18} />
-              </button>
-            ) : (
-              <button onClick={handleLogin} className="bg-white text-indigo-600 px-3 py-1 rounded text-sm font-bold shadow hover:bg-slate-100 transition flex items-center gap-1">
-                <LogIn size={16} /> Login
-              </button>
-            )}
-            <div className="md:hidden">
-              <button
-                onClick={() => setActiveTab('preview')}
-                className="bg-white/20 hover:bg-white/30 px-3 py-1 rounded text-sm font-bold transition ml-2"
-              >
-                プレビュー
-              </button>
-            </div>
-          </div>
-        </div>
 
-        {/* Content Area */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-6 pb-20 md:pb-4 relative">
-
-          {/* Guest User Warning */}
-          {!user && (
-            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800 flex items-start gap-2">
-              <User size={18} className="shrink-0 mt-0.5" />
-              <div>
-                ログインしていません。<br />
-                データを保存・復元するにはログインが必要です。
-              </div>
-            </div>
-          )}
-
-          {/* Date Picker */}
-          <section className="bg-slate-50 p-3 rounded-lg border border-slate-100">
-            <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1">
-              <Calendar size={14} />日付選択
-            </h2>
+          {/* 日付選択 (Header内) */}
+          <div className="flex items-center bg-indigo-700 rounded-md overflow-hidden border border-indigo-500/30">
+            <button onClick={() => changeDate(-1)} className="p-1.5 hover:bg-indigo-500 transition"><ChevronLeft size={16} /></button>
             <div className="relative">
               <input
                 type="date"
                 value={currentDate}
                 onChange={(e) => setCurrentDate(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-300 rounded focus:ring-2 focus:ring-indigo-500 outline-none font-medium text-slate-700"
+                className="bg-transparent text-white border-none outline-none text-sm font-bold px-2 w-32 text-center [&::-webkit-calendar-picker-indicator]:invert"
               />
-              {dataLoading && (
-                <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                  <Loader2 className="animate-spin text-indigo-600" size={18} />
-                </div>
-              )}
             </div>
-          </section>
-
-          {/* Form Inputs */}
-          <section className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider">内容入力 (右の列から)</h2>
-              <span className="text-xs text-slate-400">最大{TEXT_MAX_LENGTH}文字</span>
-            </div>
-
-            {columns.map((col, index) => (
-              <div key={col.id} className="group bg-white border border-slate-200 rounded-lg p-3 hover:border-indigo-300 transition-colors shadow-sm transition-all">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">
-                      {index === 0 ? '見出し' : `${index + 1}列目`}
-                    </span>
-
-                    <div className="flex items-center border border-slate-200 rounded overflow-hidden">
-                      <button
-                        onClick={() => moveRow(index, -1)}
-                        disabled={index === 0}
-                        className="px-1.5 py-0.5 hover:bg-slate-100 active:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed border-r border-slate-200"
-                      >
-                        <ArrowUp size={14} className="text-slate-500" />
-                      </button>
-                      <button
-                        onClick={() => moveRow(index, 1)}
-                        disabled={index === columns.length - 1}
-                        className="px-1.5 py-0.5 hover:bg-slate-100 active:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed"
-                      >
-                        <ArrowDown size={14} className="text-slate-500" />
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="flex gap-1 bg-slate-50 p-1 rounded-full border border-slate-100">
-                    {markButtons.map((btn) => {
-                      const isActive = col.type === btn.type;
-                      const activeClass = isActive
-                        ? 'bg-white shadow ring-1 ring-indigo-200 scale-100 z-10'
-                        : 'text-slate-400 hover:text-slate-600 hover:bg-slate-200 scale-90';
-
-                      return (
-                        <button
-                          key={btn.type}
-                          onClick={() => handleTypeChange(col.id, btn.type)}
-                          className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold transition-all ${activeClass}`}
-                          title={btn.label}
-                        >
-                          {btn.type === 'normal' ? <span className="text-lg leading-none">-</span> : (
-                            <span className={`flex items-center justify-center w-5 h-5 rounded-full border 
-                              ${btn.type === 'handout' ? 'border-amber-500 text-amber-600' : ''}
-                              ${btn.type === 'homework' ? 'border-indigo-500 text-indigo-600' : ''}
-                              ${btn.type === 'contact' ? 'border-emerald-500 text-emerald-600' : ''}
-                              ${btn.type === 'belongings' ? 'border-rose-500 text-rose-600' : ''}
-                            `}>{btn.char}</span>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={col.text}
-                    onChange={(e) => handleTextChange(col.id, e.target.value)}
-                    maxLength={TEXT_MAX_LENGTH}
-                    className="w-full px-3 py-2 pr-10 border-b border-slate-200 bg-transparent focus:border-indigo-500 outline-none text-slate-700 placeholder-slate-300 transition-colors"
-                    placeholder="入力..."
-                  />
-                  <div className={`absolute right-0 top-1/2 -translate-y-1/2 text-xs font-mono 
-                    ${col.text.length > TEXT_MAX_LENGTH ? 'text-red-500 font-bold' : 'text-slate-300'}
-                  `}>
-                    {col.text.length}/{TEXT_MAX_LENGTH}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </section>
-
-          <div className="pt-4 pb-8">
-            <button
-              onClick={handleDownloadPDF}
-              className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow-lg shadow-indigo-200 flex items-center justify-center gap-2 transition-all active:scale-95"
-            >
-              <Download size={18} />
-              <span>PDFでダウンロード</span>
-            </button>
+            <button onClick={() => changeDate(1)} className="p-1.5 hover:bg-indigo-500 transition"><ChevronRight size={16} /></button>
           </div>
+          {dataLoading && <Loader2 className="animate-spin text-white/70" size={16} />}
+        </div>
+
+        <div className="flex items-center gap-2">
+          {isAdmin ? (
+            <div className="flex items-center gap-2">
+              <div className="hidden sm:block text-xs text-indigo-200">管理者モード</div>
+              <button onClick={handleLogout} className="bg-white/20 hover:bg-white/30 p-2 rounded-full transition" title="ログアウト">
+                <LogOut size={18} />
+              </button>
+            </div>
+          ) : (
+            // 閲覧者にはログインボタンを控えめに表示（管理者用）
+            <button onClick={handleLogin} className="text-indigo-200 text-xs hover:text-white flex items-center gap-1 opacity-70 hover:opacity-100 transition">
+              <LogIn size={14} /> 管理者
+            </button>
+          )}
         </div>
       </div>
 
       {/* ------------------------------------------------------------------
-          右側: プレビューエリア
+          左側: 入力パネル (Admin Only)
+         ------------------------------------------------------------------ */}
+      {isAdmin && (
+        <div className={`
+            pt-14 w-full md:w-96 bg-white shadow-xl z-20 flex flex-col border-r border-slate-200 h-full
+            ${activeTab === 'preview' ? 'hidden md:flex' : 'flex'}
+        `}>
+          {/* Content Area */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-6 pb-20 md:pb-4 relative">
+
+            {/* Form Inputs */}
+            <section className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider">内容入力 (右の列から)</h2>
+                <span className="text-xs text-slate-400">最大{TEXT_MAX_LENGTH}文字</span>
+              </div>
+
+              {columns.map((col, index) => (
+                <div key={col.id} className="group bg-white border border-slate-200 rounded-lg p-3 hover:border-indigo-300 transition-colors shadow-sm transition-all">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">
+                        {index === 0 ? '見出し' : `${index + 1}列目`}
+                      </span>
+
+                      <div className="flex items-center border border-slate-200 rounded overflow-hidden">
+                        <button
+                          onClick={() => moveRow(index, -1)}
+                          disabled={index === 0}
+                          className="px-1.5 py-0.5 hover:bg-slate-100 active:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed border-r border-slate-200"
+                        >
+                          <ArrowUp size={14} className="text-slate-500" />
+                        </button>
+                        <button
+                          onClick={() => moveRow(index, 1)}
+                          disabled={index === columns.length - 1}
+                          className="px-1.5 py-0.5 hover:bg-slate-100 active:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed"
+                        >
+                          <ArrowDown size={14} className="text-slate-500" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-1 bg-slate-50 p-1 rounded-full border border-slate-100">
+                      {markButtons.map((btn) => {
+                        const isActive = col.type === btn.type;
+                        const activeClass = isActive
+                          ? 'bg-white shadow ring-1 ring-indigo-200 scale-100 z-10'
+                          : 'text-slate-400 hover:text-slate-600 hover:bg-slate-200 scale-90';
+
+                        return (
+                          <button
+                            key={btn.type}
+                            onClick={() => handleTypeChange(col.id, btn.type)}
+                            className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold transition-all ${activeClass}`}
+                            title={btn.label}
+                          >
+                            {btn.type === 'normal' ? <span className="text-lg leading-none">-</span> : (
+                              <span className={`flex items-center justify-center w-5 h-5 rounded-full border 
+                                ${btn.type === 'handout' ? 'border-amber-500 text-amber-600' : ''}
+                                ${btn.type === 'homework' ? 'border-indigo-500 text-indigo-600' : ''}
+                                ${btn.type === 'contact' ? 'border-emerald-500 text-emerald-600' : ''}
+                                ${btn.type === 'belongings' ? 'border-rose-500 text-rose-600' : ''}
+                                `}>{btn.char}</span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={col.text}
+                      onChange={(e) => handleTextChange(col.id, e.target.value)}
+                      maxLength={TEXT_MAX_LENGTH}
+                      className="w-full px-3 py-2 pr-10 border-b border-slate-200 bg-transparent focus:border-indigo-500 outline-none text-slate-700 placeholder-slate-300 transition-colors"
+                      placeholder="入力..."
+                    />
+                    <div className={`absolute right-0 top-1/2 -translate-y-1/2 text-xs font-mono 
+                        ${col.text.length > TEXT_MAX_LENGTH ? 'text-red-500 font-bold' : 'text-slate-300'}
+                    `}>
+                      {col.text.length}/{TEXT_MAX_LENGTH}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </section>
+
+            {/* Viewers don't need PDF download, but Admin might want it */}
+            <div className="pt-4 pb-8">
+              <button
+                onClick={handleDownloadPDF}
+                className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow-lg shadow-indigo-200 flex items-center justify-center gap-2 transition-all active:scale-95"
+              >
+                <Download size={18} />
+                <span>PDFでダウンロード</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------------
+          右側 (Viewerにはメイン): プレビューエリア
          ------------------------------------------------------------------ */}
       <div className={`
-        flex-1 bg-neutral-200 overflow-hidden relative flex-col h-full
-        ${activeTab === 'edit' ? 'hidden md:flex' : 'flex'}
+        pt-14 flex-1 bg-neutral-200 overflow-hidden relative flex-col h-full
+        ${isAdmin && activeTab === 'edit' ? 'hidden md:flex' : 'flex'}
       `}>
-        <div className="md:hidden p-4 bg-indigo-600 text-white flex items-center justify-between shrink-0 shadow-md z-10">
-          <h1 className="text-lg font-bold">プレビュー</h1>
-          <button onClick={() => setActiveTab('edit')} className="bg-white/20 hover:bg-white/30 px-3 py-1 rounded text-sm font-bold">
-            編集に戻る
-          </button>
-        </div>
+        {/* Admin Mobile Toggle Header (Not needed if Header is global, but maybe useful for "Edit" button?) */}
+        {isAdmin && (
+          <div className="md:hidden p-2 bg-white/50 backdrop-blur absolute top-16 left-2 right-2 rounded-lg z-10 flex justify-center">
+            <span className="text-xs text-slate-500">プレビューモード中 (PC推奨)</span>
+            <button onClick={() => setActiveTab('edit')} className="ml-4 text-xs font-bold text-indigo-600 border border-indigo-600 px-2 py-0.5 rounded">編集に戻る</button>
+          </div>
+        )}
 
-        <div className="flex-1 overflow-auto bg-neutral-200 relative">
+        <div className="flex-1 overflow-auto bg-neutral-200 relative flex flex-col">
+          {/* Viewing status for non-admins */}
+          {!isAdmin && (
+            <div className="text-center py-2 text-slate-500 text-sm">
+              {/* 閲覧者向けメッセージ */}
+            </div>
+          )}
+
           <div className="min-h-full p-4 flex items-center justify-center">
 
             <div ref={notebookRef} className="bg-white shadow-xl w-full max-w-[400px] md:max-w-2xl aspect-[3/4] relative overflow-hidden flex flex-col rounded-sm border border-slate-300 shrink-0">
