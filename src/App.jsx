@@ -1,40 +1,63 @@
-import React, { useState, useRef } from 'react';
-import { BookOpen, Download, ArrowUp, ArrowDown } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { BookOpen, Download, ArrowUp, ArrowDown, User, LogIn, LogOut, Loader2, Calendar } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
+import { auth, googleProvider, db } from './firebase';
+import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 /**
- * 連絡帳アプリ モックアップ (v8 - PDFダウンロード機能追加版)
- * * 修正内容:
- * - 「保存して印刷」ボタンを「PDFでダウンロード」に変更。
- * - html2pdf.jsを使用して、プレビューと同じ見た目のPDFを生成・ダウンロードする機能を追加。
+ * 連絡帳アプリ (Firebase統合詳細版)
+ *
+ * * 機能追加:
+ * - Googleログイン/ログアウト
+ * - Firestoreへのデータ保存・読み込み
+ * - 日付選択（カレンダー）による過去データの参照
  */
 
 // ----------------------------------------------------------------------
 // Constants & Types
 // ----------------------------------------------------------------------
 
-const GRID_ROWS = 12; // マス目の数（行数）
-const TEXT_MAX_LENGTH = GRID_ROWS - 1; // テキストが入るのは2マス目以降なので -1
+const GRID_ROWS = 12;
+const TEXT_MAX_LENGTH = GRID_ROWS - 1;
 
-// 初期データ
-const INITIAL_DATA = {
-  date: "2月7日",
-  weekday: "金",
-  columns: [
-    { id: 1, type: 'handout', text: "3" },           // 手丸
-    { id: 2, type: 'homework', text: "音読" },      // し丸
-    { id: 3, type: 'normal', text: "漢字ノート" },   // なし
-    { id: 4, type: 'contact', text: "集金袋" },      // れ点
-    { id: 5, type: 'belongings', text: "月曜セット" }, // も丸
-    { id: 6, type: 'empty', text: "" },
-    { id: 7, type: 'empty', text: "" },
-    { id: 8, type: 'empty', text: "" },
-  ]
-};
+// デフォルトの列データ構造
+const DEFAULT_COLUMNS = [
+  { id: 1, type: 'handout', text: "" },
+  { id: 2, type: 'homework', text: "" },
+  { id: 3, type: 'normal', text: "" },
+  { id: 4, type: 'contact', text: "" },
+  { id: 5, type: 'belongings', text: "" },
+  { id: 6, type: 'empty', text: "" },
+  { id: 7, type: 'empty', text: "" },
+  { id: 8, type: 'empty', text: "" },
+];
+
+const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
 
 // ----------------------------------------------------------------------
 // Helper Functions
 // ----------------------------------------------------------------------
+
+const getTodayString = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const formatDateDisplay = (dateStr) => {
+  if (!dateStr) return { date: '', weekday: '' };
+  const d = new Date(dateStr);
+  const month = d.getMonth() + 1;
+  const day = d.getDate();
+  const week = WEEKDAYS[d.getDay()];
+  return {
+    date: `${month}月${day}日`,
+    weekday: week
+  };
+};
 
 const parseTextToChars = (text) => {
   if (!text) return [];
@@ -52,211 +75,212 @@ const parseTextToChars = (text) => {
 };
 
 // ----------------------------------------------------------------------
-// Components
+// Sub Components
 // ----------------------------------------------------------------------
 
-/**
- * 丸囲み文字コンポーネント
- */
 const CircleMark = ({ char, colorClass }) => (
-  <div className={`
-    w-[85%] h-[85%] rounded-full border-[1.5px] ${colorClass}
-    flex items-center justify-center
-    shrink-0
-  `}>
-    <span className={`
-      text-[0.8em] font-bold leading-none ${colorClass.split(' ')[0]}
-    `} style={{ writingMode: 'horizontal-tb' }}>
+  <div className={`w-[85%] h-[85%] rounded-full border-[1.5px] ${colorClass} flex items-center justify-center shrink-0`}>
+    <span className={`text-[0.8em] font-bold leading-none ${colorClass.split(' ')[0]}`} style={{ writingMode: 'horizontal-tb' }}>
       {char}
     </span>
   </div>
 );
 
-/**
- * マス目（1文字分）コンポーネント
- */
 const GridCell = ({ charData, isHeader, isLastRow }) => {
   const borderStyle = isLastRow ? '' : 'border-b border-slate-300';
   const bgStyle = isHeader ? 'bg-slate-50' : '';
-
   let content = null;
 
   if (charData) {
     const { char, isTateChuYoko, isMark, markType } = charData;
-
     if (isMark) {
-      // マーク描画 (isMarkフラグがある場合)
       if (markType === 'homework') content = <CircleMark char="し" colorClass="text-indigo-600 border-indigo-600" />;
       else if (markType === 'contact') content = <CircleMark char="れ" colorClass="text-emerald-600 border-emerald-600" />;
       else if (markType === 'belongings') content = <CircleMark char="も" colorClass="text-rose-600 border-rose-600" />;
       else if (markType === 'handout') content = <CircleMark char="手" colorClass="text-amber-600 border-amber-600" />;
-      // normalの場合は空欄
     } else {
-      // 通常文字描画
       const isAlphanumeric = !isTateChuYoko && /[0-9a-zA-Z]/.test(char);
       content = (
         <span
-          className={`
-            font-serif leading-none select-none text-slate-700
-            ${isTateChuYoko
-              ? 'text-[0.65em] w-full text-center tracking-tighter scale-x-110'
-              : 'text-[1.1em]'}
-          `}
-          style={{
-            writingMode: isTateChuYoko ? 'horizontal-tb' : 'vertical-rl',
-            textOrientation: isAlphanumeric ? 'upright' : undefined,
-          }}
+          className={`font-serif leading-none select-none text-slate-700 ${isTateChuYoko ? 'text-[0.65em] w-full text-center tracking-tighter scale-x-110' : 'text-[1.1em]'}`}
+          style={{ writingMode: isTateChuYoko ? 'horizontal-tb' : 'vertical-rl', textOrientation: isAlphanumeric ? 'upright' : undefined }}
         >
           {char}
         </span>
       );
     }
   }
-
   return (
-    <div className={`
-      w-full h-full 
-      border-r border-slate-300 ${borderStyle} ${bgStyle}
-      flex items-center justify-center 
-      relative overflow-hidden
-    `}>
+    <div className={`w-full h-full border-r border-slate-300 ${borderStyle} ${bgStyle} flex items-center justify-center relative overflow-hidden`}>
       {content}
     </div>
   );
 };
 
-/**
- * 縦書きの1列（行）コンポーネント
- */
 const NotebookColumn = ({ data }) => {
-  // 1. マーク情報 (1マス目)
   const firstCellData = { isMark: true, markType: data.type };
-
-  // 2. テキスト情報
   const textChars = parseTextToChars(data.text);
-
-  // 3. 全体配列 (Index 0:Mark, Index 1~:Text)
   const cells = Array(GRID_ROWS).fill(null).map((_, i) => {
     if (i === 0) return firstCellData;
     return textChars[i - 1] || null;
   });
-
   return (
     <div className="h-full border-l border-slate-400 box-border w-10 md:w-14 shrink-0">
-      <div
-        className="grid h-full w-full"
-        style={{ gridTemplateRows: `repeat(${GRID_ROWS}, 1fr)` }}
-      >
+      <div className="grid h-full w-full" style={{ gridTemplateRows: `repeat(${GRID_ROWS}, 1fr)` }}>
         {cells.map((charData, i) => (
-          <GridCell
-            key={i}
-            charData={charData}
-            isHeader={false}
-            isLastRow={i === GRID_ROWS - 1}
-          />
+          <GridCell key={i} charData={charData} isHeader={false} isLastRow={i === GRID_ROWS - 1} />
         ))}
       </div>
     </div>
   );
 };
 
-/**
- * 右端の日付エリア
- */
-const DateColumn = ({ date, weekday }) => {
+const DateColumn = ({ dateStr }) => {
+  const { date, weekday } = formatDateDisplay(dateStr);
   const dateChars = parseTextToChars(date);
   const weekChars = parseTextToChars(weekday);
   const cellsRaw = [];
-
-  // 上2マス空け -> 日付 -> 1マス空け -> 曜日
   for (let i = 0; i < 2; i++) cellsRaw.push(null);
   dateChars.forEach(c => cellsRaw.push(c));
   cellsRaw.push(null);
   weekChars.forEach(c => cellsRaw.push(c));
-
   const cells = Array(GRID_ROWS).fill(null).map((_, i) => cellsRaw[i] || null);
 
   return (
     <div className="h-full border-l-2 border-slate-500 box-border w-10 md:w-14 shrink-0 bg-slate-50/50">
-      <div
-        className="grid h-full w-full"
-        style={{ gridTemplateRows: `repeat(${GRID_ROWS}, 1fr)` }}
-      >
+      <div className="grid h-full w-full" style={{ gridTemplateRows: `repeat(${GRID_ROWS}, 1fr)` }}>
         {cells.map((char, i) => (
-          <GridCell
-            key={i}
-            charData={char}
-            isHeader={true}
-            isLastRow={i === GRID_ROWS - 1}
-          />
+          <GridCell key={i} charData={char} isHeader={true} isLastRow={i === GRID_ROWS - 1} />
         ))}
       </div>
     </div>
   );
 };
 
-/**
- * メインアプリケーション
- */
+// ----------------------------------------------------------------------
+// Main Application
+// ----------------------------------------------------------------------
+
 export default function RenrakuchoApp() {
-  const [data, setData] = useState(INITIAL_DATA);
+  // State
+  const [user, setUser] = useState(null); // Firebase User
+  const [loading, setLoading] = useState(true); // Auth Loading
+  const [dataLoading, setDataLoading] = useState(false); // Data Fetching
+
+  const [currentDate, setCurrentDate] = useState(getTodayString());
+  const [columns, setColumns] = useState(DEFAULT_COLUMNS);
   const [activeTab, setActiveTab] = useState('edit');
   const notebookRef = useRef(null);
 
+  // Auth Listener
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Data Fetching
+  useEffect(() => {
+    if (!user) return;
+
+    // データ読込関数
+    const loadData = async () => {
+      setDataLoading(true);
+      try {
+        const docRef = doc(db, "users", user.uid, "entries", currentDate);
+        const docSnap = await getDoc(docRef);
+
+        if (docSnap.exists()) {
+          setColumns(docSnap.data().columns);
+        } else {
+          // データがない場合はデフォルトに戻す
+          setColumns(DEFAULT_COLUMNS);
+        }
+      } catch (error) {
+        console.error("Error loading document: ", error);
+        alert("データの読み込みに失敗しました");
+      } finally {
+        setDataLoading(false);
+      }
+    };
+
+    loadData();
+  }, [user, currentDate]); // ユーザーか日付が変わったら再取得
+
+  // Save Logic
+  const saveData = async (newColumns) => {
+    if (!user) return;
+    try {
+      const docRef = doc(db, "users", user.uid, "entries", currentDate);
+      await setDoc(docRef, {
+        columns: newColumns,
+        date: currentDate,
+        updatedAt: new Date()
+      });
+    } catch (error) {
+      console.error("Error writing document: ", error);
+    }
+  };
+
+  // Handlers
+  const handleLogin = async () => {
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (error) {
+      console.error("Login failed", error);
+      alert("ログインに失敗しました");
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      setColumns(DEFAULT_COLUMNS); // ログアウト時にリセット
+    } catch (error) {
+      console.error("Logout failed", error);
+    }
+  };
+
   const handleTextChange = (id, newText) => {
-    setData(prev => ({
-      ...prev,
-      columns: prev.columns.map(col =>
-        col.id === id ? { ...col, text: newText } : col
-      )
-    }));
+    const newColumns = columns.map(col =>
+      col.id === id ? { ...col, text: newText } : col
+    );
+    setColumns(newColumns);
+    saveData(newColumns); // Auto-save on change
   };
 
   const handleTypeChange = (id, newType) => {
-    setData(prev => ({
-      ...prev,
-      columns: prev.columns.map(col =>
-        col.id === id ? { ...col, type: newType } : col
-      )
-    }));
+    const newColumns = columns.map(col =>
+      col.id === id ? { ...col, type: newType } : col
+    );
+    setColumns(newColumns);
+    saveData(newColumns); // Auto-save on change
   };
 
-  // 行の入れ替え処理
   const moveRow = (index, direction) => {
-    // コピーを作成
-    const newColumns = [...data.columns];
+    const newColumns = [...columns];
     const targetIndex = index + direction;
-
-    // 範囲外チェック
     if (targetIndex < 0 || targetIndex >= newColumns.length) return;
-
-    // スワップ（分割代入で入れ替え）
     [newColumns[index], newColumns[targetIndex]] = [newColumns[targetIndex], newColumns[index]];
-
-    setData(prev => ({ ...prev, columns: newColumns }));
+    setColumns(newColumns);
+    saveData(newColumns); // Auto-save on change
   };
 
-  const handleDateChange = (key, value) => {
-    setData(prev => ({ ...prev, [key]: value }));
-  };
-
-  // PDFダウンロード処理
   const handleDownloadPDF = () => {
     const element = notebookRef.current;
     if (!element) return;
-
     const opt = {
       margin: 0,
-      filename: `renrakucho-${data.date}.pdf`,
+      filename: `renrakucho-${currentDate}.pdf`,
       image: { type: 'jpeg', quality: 0.98 },
       html2canvas: { scale: 2, useCORS: true },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
     };
-
     html2pdf().set(opt).from(element).save();
   };
 
-  // ボタン定義
   const markButtons = [
     { type: 'normal', label: 'なし', char: '-', color: 'bg-slate-100 text-slate-500 border-slate-300' },
     { type: 'handout', label: '手紙', char: '手', color: 'bg-amber-100 text-amber-700 border-amber-300' },
@@ -264,6 +288,14 @@ export default function RenrakuchoApp() {
     { type: 'contact', label: '連絡', char: 'れ', color: 'bg-emerald-100 text-emerald-700 border-emerald-300' },
     { type: 'belongings', label: '持物', char: 'も', color: 'bg-rose-100 text-rose-700 border-rose-300' },
   ];
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-slate-100 text-slate-400">
+        <Loader2 className="animate-spin mr-2" /> Loading...
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 bg-neutral-100 font-sans text-slate-800 flex flex-col md:flex-row overflow-hidden">
@@ -275,57 +307,75 @@ export default function RenrakuchoApp() {
         w-full md:w-96 bg-white shadow-xl z-20 flex flex-col border-r border-slate-200 h-full
         ${activeTab === 'preview' ? 'hidden md:flex' : 'flex'}
       `}>
+        {/* Header */}
         <div className="p-4 bg-indigo-600 text-white flex items-center justify-between shrink-0">
           <h1 className="text-lg font-bold flex items-center gap-2">
             <BookOpen size={20} />
             デジタル連絡帳
           </h1>
-          <div className="md:hidden">
-            <button
-              onClick={() => setActiveTab('preview')}
-              className="bg-white/20 hover:bg-white/30 px-3 py-1 rounded text-sm font-bold transition"
-            >
-              プレビューへ
-            </button>
+          <div className="flex items-center gap-2">
+            {user ? (
+              <button onClick={handleLogout} className="bg-white/20 hover:bg-white/30 p-2 rounded-full transition" title="ログアウト">
+                <LogOut size={18} />
+              </button>
+            ) : (
+              <button onClick={handleLogin} className="bg-white text-indigo-600 px-3 py-1 rounded text-sm font-bold shadow hover:bg-slate-100 transition flex items-center gap-1">
+                <LogIn size={16} /> Login
+              </button>
+            )}
+            <div className="md:hidden">
+              <button
+                onClick={() => setActiveTab('preview')}
+                className="bg-white/20 hover:bg-white/30 px-3 py-1 rounded text-sm font-bold transition ml-2"
+              >
+                プレビュー
+              </button>
+            </div>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-6 pb-20 md:pb-4">
+        {/* Content Area */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-6 pb-20 md:pb-4 relative">
 
-          <section className="space-y-3 bg-slate-50 p-3 rounded-lg border border-slate-100">
-            <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider">日付設定</h2>
-            <div className="grid grid-cols-2 gap-3">
+          {/* Guest User Warning */}
+          {!user && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800 flex items-start gap-2">
+              <User size={18} className="shrink-0 mt-0.5" />
               <div>
-                <label className="block text-sm font-medium text-slate-600 mb-1">月日</label>
-                <input
-                  type="text"
-                  value={data.date}
-                  onChange={(e) => handleDateChange('date', e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-300 rounded focus:ring-2 focus:ring-indigo-500 outline-none"
-                />
+                ログインしていません。<br />
+                データを保存・復元するにはログインが必要です。
               </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-600 mb-1">曜日</label>
-                <select
-                  value={data.weekday}
-                  onChange={(e) => handleDateChange('weekday', e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-300 rounded focus:ring-2 focus:ring-indigo-500 outline-none"
-                >
-                  {['月', '火', '水', '木', '金', '土', '日'].map(d => (
-                    <option key={d} value={d}>{d}</option>
-                  ))}
-                </select>
-              </div>
+            </div>
+          )}
+
+          {/* Date Picker */}
+          <section className="bg-slate-50 p-3 rounded-lg border border-slate-100">
+            <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1">
+              <Calendar size={14} />日付選択
+            </h2>
+            <div className="relative">
+              <input
+                type="date"
+                value={currentDate}
+                onChange={(e) => setCurrentDate(e.target.value)}
+                className="w-full px-3 py-2 border border-slate-300 rounded focus:ring-2 focus:ring-indigo-500 outline-none font-medium text-slate-700"
+              />
+              {dataLoading && (
+                <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                  <Loader2 className="animate-spin text-indigo-600" size={18} />
+                </div>
+              )}
             </div>
           </section>
 
+          {/* Form Inputs */}
           <section className="space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider">内容入力 (右の列から)</h2>
               <span className="text-xs text-slate-400">最大{TEXT_MAX_LENGTH}文字</span>
             </div>
 
-            {data.columns.map((col, index) => (
+            {columns.map((col, index) => (
               <div key={col.id} className="group bg-white border border-slate-200 rounded-lg p-3 hover:border-indigo-300 transition-colors shadow-sm transition-all">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
@@ -333,28 +383,24 @@ export default function RenrakuchoApp() {
                       {index === 0 ? '見出し' : `${index + 1}列目`}
                     </span>
 
-                    {/* 並べ替えボタン */}
                     <div className="flex items-center border border-slate-200 rounded overflow-hidden">
                       <button
                         onClick={() => moveRow(index, -1)}
                         disabled={index === 0}
                         className="px-1.5 py-0.5 hover:bg-slate-100 active:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed border-r border-slate-200"
-                        title="上(右)へ移動"
                       >
                         <ArrowUp size={14} className="text-slate-500" />
                       </button>
                       <button
                         onClick={() => moveRow(index, 1)}
-                        disabled={index === data.columns.length - 1}
+                        disabled={index === columns.length - 1}
                         className="px-1.5 py-0.5 hover:bg-slate-100 active:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed"
-                        title="下(左)へ移動"
                       >
                         <ArrowDown size={14} className="text-slate-500" />
                       </button>
                     </div>
                   </div>
 
-                  {/* マーク選択ボタン群 */}
                   <div className="flex gap-1 bg-slate-50 p-1 rounded-full border border-slate-100">
                     {markButtons.map((btn) => {
                       const isActive = col.type === btn.type;
@@ -366,24 +412,16 @@ export default function RenrakuchoApp() {
                         <button
                           key={btn.type}
                           onClick={() => handleTypeChange(col.id, btn.type)}
-                          className={`
-                            w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold transition-all
-                            ${activeClass}
-                          `}
+                          className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold transition-all ${activeClass}`}
                           title={btn.label}
                         >
-                          {btn.type === 'normal' ? (
-                            <span className="text-lg leading-none">-</span>
-                          ) : (
-                            <span className={`
-                              flex items-center justify-center w-5 h-5 rounded-full border 
+                          {btn.type === 'normal' ? <span className="text-lg leading-none">-</span> : (
+                            <span className={`flex items-center justify-center w-5 h-5 rounded-full border 
                               ${btn.type === 'handout' ? 'border-amber-500 text-amber-600' : ''}
                               ${btn.type === 'homework' ? 'border-indigo-500 text-indigo-600' : ''}
                               ${btn.type === 'contact' ? 'border-emerald-500 text-emerald-600' : ''}
                               ${btn.type === 'belongings' ? 'border-rose-500 text-rose-600' : ''}
-                            `}>
-                              {btn.char}
-                            </span>
+                            `}>{btn.char}</span>
                           )}
                         </button>
                       );
@@ -400,7 +438,6 @@ export default function RenrakuchoApp() {
                     className="w-full px-3 py-2 pr-10 border-b border-slate-200 bg-transparent focus:border-indigo-500 outline-none text-slate-700 placeholder-slate-300 transition-colors"
                     placeholder="入力..."
                   />
-                  {/* 文字数カウンター */}
                   <div className={`absolute right-0 top-1/2 -translate-y-1/2 text-xs font-mono 
                     ${col.text.length > TEXT_MAX_LENGTH ? 'text-red-500 font-bold' : 'text-slate-300'}
                   `}>
@@ -432,10 +469,7 @@ export default function RenrakuchoApp() {
       `}>
         <div className="md:hidden p-4 bg-indigo-600 text-white flex items-center justify-between shrink-0 shadow-md z-10">
           <h1 className="text-lg font-bold">プレビュー</h1>
-          <button
-            onClick={() => setActiveTab('edit')}
-            className="bg-white/20 hover:bg-white/30 px-3 py-1 rounded text-sm font-bold"
-          >
+          <button onClick={() => setActiveTab('edit')} className="bg-white/20 hover:bg-white/30 px-3 py-1 rounded text-sm font-bold">
             編集に戻る
           </button>
         </div>
@@ -443,35 +477,24 @@ export default function RenrakuchoApp() {
         <div className="flex-1 overflow-auto bg-neutral-200 relative">
           <div className="min-h-full p-4 flex items-center justify-center">
 
-            {/* ノートブック用紙: 元のシンプルな白背景に戻す */}
-            <div
-              ref={notebookRef}
-              className="bg-white shadow-xl w-full max-w-[400px] md:max-w-2xl aspect-[3/4] relative overflow-hidden flex flex-col rounded-sm border border-slate-300 shrink-0"
-            >
+            <div ref={notebookRef} className="bg-white shadow-xl w-full max-w-[400px] md:max-w-2xl aspect-[3/4] relative overflow-hidden flex flex-col rounded-sm border border-slate-300 shrink-0">
 
-              {/* 上部ヘッダー */}
               <div className="h-[8%] border-b border-slate-300 w-full bg-slate-50/50 flex items-end justify-between px-4 pb-2 shrink-0">
                 <div className="text-[10px] text-slate-400">No. ______</div>
-                <div className="text-[10px] text-slate-400">Date: ______</div>
+                <div className="text-[10px] text-slate-400">Date: {currentDate}</div>
               </div>
 
-              {/* グリッド本体 */}
               <div className="flex-1 flex flex-row-reverse p-4 md:p-6 justify-center overflow-hidden">
-
-                <DateColumn date={data.date} weekday={data.weekday} />
-
-                {data.columns.map((col) => (
+                <DateColumn dateStr={currentDate} />
+                {columns.map((col) => (
                   <NotebookColumn key={col.id} data={col} />
                 ))}
-
               </div>
 
-              {/* 下部フッター */}
               <div className="h-[6%] border-t border-slate-300 w-full bg-slate-50/50 flex items-center justify-center shrink-0">
                 <span className="text-xs text-slate-300 tracking-widest">RENRAKU-CHO</span>
               </div>
 
-              {/* 陰影オーバーレイ (テクスチャなし) */}
               <div className="absolute inset-0 pointer-events-none bg-gradient-to-r from-slate-900/5 via-transparent to-slate-900/5 mix-blend-multiply"></div>
 
             </div>
