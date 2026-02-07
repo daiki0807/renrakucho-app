@@ -92,7 +92,8 @@ const CircleMark = ({ char, colorClass }) => (
 );
 
 const GridCell = ({ charData, isHeader, isLastRow }) => {
-  const borderStyle = isLastRow ? '' : 'border-b border-slate-300';
+  // 横線（border-b）を削除し、縦線（border-r）のみにする
+  const borderStyle = '';
   const bgStyle = isHeader ? 'bg-slate-50' : '';
   let content = null;
 
