@@ -105,7 +105,12 @@ const GridCell = ({ charData, isHeader, isLastRow }) => {
       const isAlphanumeric = !isTateChuYoko && /[0-9a-zA-Z]/.test(char);
       content = (
         <span
-          className={`font-serif leading-none select-none text-slate-700 ${isTateChuYoko ? 'text-[0.65em] w-full text-center tracking-tighter scale-x-110' : 'text-[1.1em]'}`}
+          className={`leading-none select-none text-slate-700 
+            ${isTateChuYoko
+              ? 'font-sans text-[0.85em] font-medium w-full text-center tracking-tighter'
+              : 'font-serif text-[1.1em]'
+            }
+          `}
           style={{ writingMode: isTateChuYoko ? 'horizontal-tb' : 'vertical-rl', textOrientation: isAlphanumeric ? 'upright' : undefined }}
         >
           {char}
