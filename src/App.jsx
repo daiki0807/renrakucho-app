@@ -672,7 +672,7 @@ export default function RenrakuchoApp() {
             </div>
           )}
 
-          <div className="min-h-full p-4 flex flex-col items-center justify-center space-y-6 md:space-y-0">
+          <div className="min-h-full p-4 flex flex-col items-center justify-start md:justify-center space-y-6 md:space-y-0 pt-8 md:pt-4">
 
             <div ref={notebookRef} className="bg-white shadow-xl h-[85vh] w-auto aspect-[3/4] relative overflow-hidden flex flex-col rounded-sm border border-slate-300 shrink-0">
 
