@@ -191,6 +191,13 @@ export default function RenrakuchoApp() {
   const [checks, setChecks] = useState([]); // Array of { name, timestamp }
   const [checkName, setCheckName] = useState(localStorage.getItem('viewerName') || '');
   const [hasChecked, setHasChecked] = useState(false);
+  const [nameHistory, setNameHistory] = useState(JSON.parse(localStorage.getItem('nameHistory') || '[]'));
+
+  const deleteNameFromHistory = (nameToDelete) => {
+    const newHistory = nameHistory.filter(n => n !== nameToDelete);
+    setNameHistory(newHistory);
+    localStorage.setItem('nameHistory', JSON.stringify(newHistory));
+  };
 
   // Auth Listener
   useEffect(() => {
@@ -304,6 +311,13 @@ export default function RenrakuchoApp() {
     }
     // 名前を保存
     localStorage.setItem('viewerName', checkName);
+
+    // 履歴に保存
+    if (!nameHistory.includes(checkName)) {
+      const newHistory = [...nameHistory, checkName];
+      setNameHistory(newHistory);
+      localStorage.setItem('nameHistory', JSON.stringify(newHistory));
+    }
 
     try {
       await addDoc(collection(db, "class_notes", currentDate, "checks"), {
@@ -615,6 +629,23 @@ export default function RenrakuchoApp() {
                     placeholder="お名前 (必須)"
                     className="w-full p-2 border border-slate-300 rounded text-center focus:border-red-400 focus:ring-2 focus:ring-red-200 outline-none transition"
                   />
+
+                  {/* Name History Chips */}
+                  {nameHistory.length > 0 && (
+                    <div className="flex flex-wrap gap-2 justify-center">
+                      {nameHistory.map((name) => (
+                        <div key={name} className="flex items-center gap-1 bg-slate-100 px-2 py-1 rounded-full border border-slate-200 text-xs text-slate-600">
+                          <button onClick={() => setCheckName(name)} className="hover:text-indigo-600 font-bold">
+                            {name}
+                          </button>
+                          <button onClick={() => deleteNameFromHistory(name)} className="text-slate-400 hover:text-red-500 rounded-full p-0.5">
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   <button
                     onClick={handleCheckStamp}
                     className="w-full py-3 bg-red-500 hover:bg-red-600 text-white rounded-lg shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 font-bold active:scale-95"
@@ -708,20 +739,37 @@ export default function RenrakuchoApp() {
                     <p className="text-sm text-slate-500 font-bold">{checkName} さん</p>
                   </div>
                 ) : (
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={checkName}
-                      onChange={(e) => setCheckName(e.target.value)}
-                      placeholder="お名前"
-                      className="flex-1 p-2 border border-slate-300 rounded text-center focus:border-red-400 outline-none"
-                    />
-                    <button
-                      onClick={handleCheckStamp}
-                      className="bg-red-500 text-white px-4 rounded-lg shadow font-bold text-sm whitespace-nowrap active:scale-95 transition"
-                    >
-                      押す
-                    </button>
+                  <div className="flex flex-col gap-3">
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={checkName}
+                        onChange={(e) => setCheckName(e.target.value)}
+                        placeholder="お名前"
+                        className="flex-1 p-2 border border-slate-300 rounded text-center focus:border-red-400 outline-none"
+                      />
+                      <button
+                        onClick={handleCheckStamp}
+                        className="bg-red-500 text-white px-4 rounded-lg shadow font-bold text-sm whitespace-nowrap active:scale-95 transition"
+                      >
+                        押す
+                      </button>
+                    </div>
+                    {/* Name History Chips (Mobile) */}
+                    {nameHistory.length > 0 && (
+                      <div className="flex flex-wrap gap-2 justify-center">
+                        {nameHistory.map((name) => (
+                          <div key={name} className="flex items-center gap-1 bg-slate-100 px-2 py-1 rounded-full border border-slate-200 text-xs text-slate-600">
+                            <button onClick={() => setCheckName(name)} className="hover:text-indigo-600 font-bold">
+                              {name}
+                            </button>
+                            <button onClick={() => deleteNameFromHistory(name)} className="text-slate-400 hover:text-red-500 rounded-full p-0.5">
+                              ×
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
                 <div className="mt-4 border-t border-slate-100 pt-2">
