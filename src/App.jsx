@@ -1,12 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { BookOpen, Download, ArrowUp, ArrowDown, User, LogIn, LogOut, Loader2, Calendar, ChevronLeft, ChevronRight, Copy } from 'lucide-react';
+import { BookOpen, Download, ArrowUp, ArrowDown, User, LogIn, LogOut, Loader2, Calendar, ChevronLeft, ChevronRight, Copy, CheckCircle, Stamp } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
 import { auth, googleProvider, db } from './firebase';
 import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, addDoc, onSnapshot, query, orderBy, serverTimestamp } from 'firebase/firestore';
 
 /**
- * 連絡帳アプリ (管理者・閲覧者 分離版 + 前日コピー)
+ * 連絡帳アプリ (管理者・閲覧者 分離版 + 前日コピー + 既読スタンプ)
  *
  * * 変更点:
  * - データ保存先を `class_notes/{date}` (共有) に変更
@@ -14,6 +14,8 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
  * - 閲覧者はプレビューと日付選択のみ可能
  * - 日付選択をヘッダー/メインエリアに移動
  * - 前日の内容をコピーする機能を追加
+ * - 既読チェック（スタンプ）機能の追加
+ * - サブコレクション `class_notes/{date}/checks` を使用
  */
 
 // ----------------------------------------------------------------------
@@ -185,6 +187,11 @@ export default function RenrakuchoApp() {
   const [activeTab, setActiveTab] = useState('edit');
   const notebookRef = useRef(null);
 
+  // Read Receipt State
+  const [checks, setChecks] = useState([]); // Array of { name, timestamp }
+  const [checkName, setCheckName] = useState(localStorage.getItem('viewerName') || '');
+  const [hasChecked, setHasChecked] = useState(false);
+
   // Auth Listener
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
@@ -200,7 +207,7 @@ export default function RenrakuchoApp() {
     return () => unsubscribe();
   }, []);
 
-  // Data Fetching (Shared Collection: class_notes)
+  // Data Fetching (Shared Collection: class_notes) + Checks Subcollection
   useEffect(() => {
     // ログインしていなくても見れるようにする (セキュリティルールで許可前提)
     // ただし、データ読み込みは日付が変わったタイミングなどで実行
@@ -219,16 +226,30 @@ export default function RenrakuchoApp() {
         }
       } catch (error) {
         console.error("Error loading document: ", error);
-        // 権限エラーなどの場合はアラートを出してもいいが、
-        // 閲覧者がアクセスした瞬間にエラーが出るのを防ぐためconsoleのみにするか、
-        // "読み込めませんでした"を表示する
       } finally {
         setDataLoading(false);
       }
     };
 
+    // Subcollection Listener for Checks
+    const checksRef = collection(db, "class_notes", currentDate, "checks");
+    const q = query(checksRef, orderBy("timestamp", "asc"));
+    const unsubscribeChecks = onSnapshot(q, (snapshot) => {
+      const checkList = snapshot.docs.map(doc => doc.data());
+      setChecks(checkList);
+
+      // Check if current user (viewer) has already checked based on name in localStorage
+      const myName = localStorage.getItem('viewerName');
+      if (myName && checkList.some(c => c.name === myName)) {
+        setHasChecked(true);
+      } else {
+        setHasChecked(false);
+      }
+    });
+
     loadData();
-  }, [currentDate]); // ユーザー依存を削除（誰でも同じ日付ならデータは見れる）
+    return () => unsubscribeChecks();
+  }, [currentDate]);
 
   // Save Logic (Admin Only)
   const saveData = async (newColumns) => {
@@ -276,6 +297,25 @@ export default function RenrakuchoApp() {
     }
   };
 
+  const handleCheckStamp = async () => {
+    if (!checkName.trim()) {
+      alert("お名前を入力してください");
+      return;
+    }
+    // 名前を保存
+    localStorage.setItem('viewerName', checkName);
+
+    try {
+      await addDoc(collection(db, "class_notes", currentDate, "checks"), {
+        name: checkName,
+        timestamp: serverTimestamp()
+      });
+      setHasChecked(true);
+    } catch (error) {
+      console.error("Error adding check: ", error);
+      alert("確認スタンプの送信に失敗しました。権限設定を確認してください。");
+    }
+  };
 
   // Handlers
   const handleLogin = async () => {
@@ -406,16 +446,18 @@ export default function RenrakuchoApp() {
       </div>
 
       {/* ------------------------------------------------------------------
-          左側: 入力パネル (Admin Only)
+          左側エリア:
+          - Admin: 入力パネル
+          - Viewer: 既読チェック & 一覧 (PC/Tab表示時、またはAdmin Panelの代わりに表示)
          ------------------------------------------------------------------ */}
-      {isAdmin && (
-        <div className={`
-            pt-14 w-full md:w-96 bg-white shadow-xl z-20 flex flex-col border-r border-slate-200 h-full
-            ${activeTab === 'preview' ? 'hidden md:flex' : 'flex'}
-        `}>
-          {/* Content Area */}
+      <div className={`
+          pt-14 w-full md:w-96 bg-white shadow-xl z-20 flex flex-col border-r border-slate-200 h-full
+          ${!isAdmin ? 'hidden md:flex' : ''}
+          ${isAdmin && activeTab !== 'edit' ? 'hidden md:flex' : 'flex'}
+      `}>
+        {isAdmin ? (
+          /* --- 管理者用パネル --- */
           <div className="flex-1 overflow-y-auto p-4 space-y-6 pb-20 md:pb-4 relative">
-
             {/* Copy Previous Day Button */}
             <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 text-center">
               <button
@@ -424,6 +466,24 @@ export default function RenrakuchoApp() {
               >
                 <Copy size={12} /> 前日の内容をコピー
               </button>
+            </div>
+
+            {/* Checks List for Admin */}
+            <div className="bg-emerald-50 p-3 rounded-lg border border-emerald-100">
+              <h3 className="text-xs font-bold text-emerald-700 mb-2 flex items-center gap-1">
+                <CheckCircle size={14} /> 確認済み ({checks.length}人)
+              </h3>
+              {checks.length === 0 ? (
+                <div className="text-xs text-slate-400 text-center py-2">まだ確認者はいません</div>
+              ) : (
+                <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
+                  {checks.map((c, i) => (
+                    <span key={i} className="text-xs bg-white text-emerald-800 px-2 py-1 rounded shadow-sm border border-emerald-100">
+                      {c.name}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Form Inputs */}
@@ -517,8 +577,60 @@ export default function RenrakuchoApp() {
               </button>
             </div>
           </div>
-        </div>
-      )}
+        ) : (
+          /* --- 閲覧者用サイドパネル (PC only) --- */
+          <div className="flex-1 p-6 space-y-6 flex flex-col items-center justify-center text-center">
+            <div className="space-y-2">
+              <h3 className="font-bold text-slate-700">確認スタンプ</h3>
+              <p className="text-xs text-slate-500">内容を確認したら、お名前を入力して<br />スタンプを押してください。</p>
+            </div>
+
+            {/* Stamp Form */}
+            <div className="bg-slate-50 p-6 rounded-xl w-full border border-slate-100 shadow-inner">
+              {hasChecked ? (
+                <div className="flex flex-col items-center gap-2 animate-in fade-in zoom-in duration-300">
+                  <div className="w-20 h-20 rounded-full border-4 border-red-500 bg-white flex items-center justify-center shadow-lg transform rotate-[-12deg]">
+                    <span className="text-red-500 font-bold text-lg select-none">見ました</span>
+                  </div>
+                  <p className="text-sm text-slate-500 mt-2 font-bold">{checkName} さん</p>
+                  <p className="text-xs text-slate-400">確認ありがとうございます！</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <input
+                    type="text"
+                    value={checkName}
+                    onChange={(e) => setCheckName(e.target.value)}
+                    placeholder="お名前 (必須)"
+                    className="w-full p-2 border border-slate-300 rounded text-center focus:border-red-400 focus:ring-2 focus:ring-red-200 outline-none transition"
+                  />
+                  <button
+                    onClick={handleCheckStamp}
+                    className="w-full py-3 bg-red-500 hover:bg-red-600 text-white rounded-lg shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 font-bold active:scale-95"
+                  >
+                    <Stamp size={18} /> スタンプを押す
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Viewer List */}
+            <div className="w-full text-left bg-white p-4 rounded-lg border border-slate-100 h-64 overflow-y-auto">
+              <h4 className="text-xs font-bold text-slate-500 mb-2 sticky top-0 bg-white pb-2 border-b border-slate-100 flex justify-between">
+                <span>みんなの確認 ({checks.length})</span>
+              </h4>
+              <ul className="space-y-1">
+                {checks.map((c, i) => (
+                  <li key={i} className="text-sm text-slate-600 flex items-center gap-2">
+                    <CheckCircle size={12} className="text-emerald-500" />
+                    {c.name}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* ------------------------------------------------------------------
           右側 (Viewerにはメイン): プレビューエリア
@@ -543,7 +655,7 @@ export default function RenrakuchoApp() {
             </div>
           )}
 
-          <div className="min-h-full p-4 flex items-center justify-center">
+          <div className="min-h-full p-4 flex flex-col items-center justify-center space-y-6 md:space-y-0">
 
             <div ref={notebookRef} className="bg-white shadow-xl h-[85vh] w-auto aspect-[3/4] relative overflow-hidden flex flex-col rounded-sm border border-slate-300 shrink-0">
 
@@ -566,6 +678,48 @@ export default function RenrakuchoApp() {
               <div className="absolute inset-0 pointer-events-none bg-gradient-to-r from-slate-900/5 via-transparent to-slate-900/5 mix-blend-multiply"></div>
 
             </div>
+
+            {/* Mobile Viewer: Show Stamp Panel below Notebook on small screens */}
+            {!isAdmin && (
+              <div className="md:hidden w-full max-w-[400px] bg-white p-4 rounded-xl shadow-lg border border-slate-200 mb-8">
+                <h3 className="font-bold text-slate-700 text-center mb-4">確認スタンプ</h3>
+                {hasChecked ? (
+                  <div className="flex flex-col items-center gap-2 p-4 bg-slate-50 rounded-lg">
+                    <div className="w-16 h-16 rounded-full border-4 border-red-500 bg-white flex items-center justify-center shadow-lg transform rotate-[-8deg]">
+                      <span className="text-red-500 font-bold text-sm select-none">見ました</span>
+                    </div>
+                    <p className="text-sm text-slate-500 font-bold">{checkName} さん</p>
+                  </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={checkName}
+                      onChange={(e) => setCheckName(e.target.value)}
+                      placeholder="お名前"
+                      className="flex-1 p-2 border border-slate-300 rounded text-center focus:border-red-400 outline-none"
+                    />
+                    <button
+                      onClick={handleCheckStamp}
+                      className="bg-red-500 text-white px-4 rounded-lg shadow font-bold text-sm whitespace-nowrap active:scale-95 transition"
+                    >
+                      押す
+                    </button>
+                  </div>
+                )}
+                <div className="mt-4 border-t border-slate-100 pt-2">
+                  <p className="text-xs text-slate-400 mb-1">みんなの確認 ({checks.length})</p>
+                  <div className="flex flex-wrap gap-1">
+                    {checks.map((c, i) => (
+                      <span key={i} className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">
+                        {c.name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
           </div>
         </div>
       </div>
