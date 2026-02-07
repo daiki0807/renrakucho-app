@@ -134,7 +134,7 @@ const NotebookColumn = ({ data }) => {
     return textChars[i - 1] || null;
   });
   return (
-    <div className="h-full border-l border-slate-400 box-border w-10 md:w-14 shrink-0">
+    <div className="h-full border-l border-slate-400 box-border flex-1 min-w-[30px]">
       <div className="grid h-full w-full" style={{ gridTemplateRows: `repeat(${GRID_ROWS}, 1fr)` }}>
         {cells.map((charData, i) => (
           <GridCell key={i} charData={charData} isHeader={false} isLastRow={i === GRID_ROWS - 1} />
@@ -156,7 +156,7 @@ const DateColumn = ({ dateStr }) => {
   const cells = Array(GRID_ROWS).fill(null).map((_, i) => cellsRaw[i] || null);
 
   return (
-    <div className="h-full border-l-2 border-slate-500 box-border w-10 md:w-14 shrink-0 bg-slate-50/50">
+    <div className="h-full border-l-2 border-slate-500 box-border flex-1 min-w-[30px] bg-slate-50/50">
       <div className="grid h-full w-full" style={{ gridTemplateRows: `repeat(${GRID_ROWS}, 1fr)` }}>
         {cells.map((char, i) => (
           <GridCell key={i} charData={char} isHeader={true} isLastRow={i === GRID_ROWS - 1} />
@@ -503,7 +503,7 @@ export default function RenrakuchoApp() {
 
           <div className="min-h-full p-4 flex items-center justify-center">
 
-            <div ref={notebookRef} className="bg-white shadow-xl w-full max-w-[400px] md:max-w-2xl aspect-[3/4] relative overflow-hidden flex flex-col rounded-sm border border-slate-300 shrink-0">
+            <div ref={notebookRef} className="bg-white shadow-xl h-[85vh] w-auto aspect-[3/4] relative overflow-hidden flex flex-col rounded-sm border border-slate-300 shrink-0">
 
               <div className="h-[8%] border-b border-slate-300 w-full bg-slate-50/50 flex items-end justify-between px-4 pb-2 shrink-0">
                 <div className="text-[10px] text-slate-400">No. ______</div>
