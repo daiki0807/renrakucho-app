@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
-import { BookOpen, Save, ArrowUp, ArrowDown } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { BookOpen, Download, ArrowUp, ArrowDown } from 'lucide-react';
+import html2pdf from 'html2pdf.js';
 
 /**
- * 連絡帳アプリ モックアップ (v7 - 並べ替え機能追加版)
+ * 連絡帳アプリ モックアップ (v8 - PDFダウンロード機能追加版)
  * * 修正内容:
- * - 編集画面の各項目に「↑」「↓」ボタンを追加し、行の入れ替えを可能にしました。
- * - デザインと機能（1行目マーク専用など）は前回のv5ベースを維持。
+ * - 「保存して印刷」ボタンを「PDFでダウンロード」に変更。
+ * - html2pdf.jsを使用して、プレビューと同じ見た目のPDFを生成・ダウンロードする機能を追加。
  */
 
 // ----------------------------------------------------------------------
@@ -200,6 +201,7 @@ const DateColumn = ({ date, weekday }) => {
 export default function RenrakuchoApp() {
   const [data, setData] = useState(INITIAL_DATA);
   const [activeTab, setActiveTab] = useState('edit');
+  const notebookRef = useRef(null);
 
   const handleTextChange = (id, newText) => {
     setData(prev => ({
@@ -236,6 +238,22 @@ export default function RenrakuchoApp() {
 
   const handleDateChange = (key, value) => {
     setData(prev => ({ ...prev, [key]: value }));
+  };
+
+  // PDFダウンロード処理
+  const handleDownloadPDF = () => {
+    const element = notebookRef.current;
+    if (!element) return;
+
+    const opt = {
+      margin: 0,
+      filename: `renrakucho-${data.date}.pdf`,
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    };
+
+    html2pdf().set(opt).from(element).save();
   };
 
   // ボタン定義
@@ -394,9 +412,12 @@ export default function RenrakuchoApp() {
           </section>
 
           <div className="pt-4 pb-8">
-            <button className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow-lg shadow-indigo-200 flex items-center justify-center gap-2 transition-all active:scale-95">
-              <Save size={18} />
-              <span>保存して印刷する</span>
+            <button
+              onClick={handleDownloadPDF}
+              className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow-lg shadow-indigo-200 flex items-center justify-center gap-2 transition-all active:scale-95"
+            >
+              <Download size={18} />
+              <span>PDFでダウンロード</span>
             </button>
           </div>
         </div>
@@ -423,7 +444,10 @@ export default function RenrakuchoApp() {
           <div className="min-h-full p-4 flex items-center justify-center">
 
             {/* ノートブック用紙: 元のシンプルな白背景に戻す */}
-            <div className="bg-white shadow-xl w-full max-w-[400px] md:max-w-2xl aspect-[3/4] relative overflow-hidden flex flex-col rounded-sm border border-slate-300 shrink-0">
+            <div
+              ref={notebookRef}
+              className="bg-white shadow-xl w-full max-w-[400px] md:max-w-2xl aspect-[3/4] relative overflow-hidden flex flex-col rounded-sm border border-slate-300 shrink-0"
+            >
 
               {/* 上部ヘッダー */}
               <div className="h-[8%] border-b border-slate-300 w-full bg-slate-50/50 flex items-end justify-between px-4 pb-2 shrink-0">
