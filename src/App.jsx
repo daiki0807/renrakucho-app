@@ -22,7 +22,7 @@ import { doc, getDoc, setDoc, collection, addDoc, onSnapshot, query, orderBy, se
 // Constants & Types
 // ----------------------------------------------------------------------
 
-const GRID_ROWS = 12;
+const GRID_ROWS = 14;
 const TEXT_MAX_LENGTH = GRID_ROWS - 1;
 
 // 管理者のメールアドレス (これ以外は閲覧者扱い)
