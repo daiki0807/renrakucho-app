@@ -1,18 +1,19 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { BookOpen, Download, ArrowUp, ArrowDown, User, LogIn, LogOut, Loader2, Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
+import { BookOpen, Download, ArrowUp, ArrowDown, User, LogIn, LogOut, Loader2, Calendar, ChevronLeft, ChevronRight, Copy } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
 import { auth, googleProvider, db } from './firebase';
 import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 /**
- * 連絡帳アプリ (管理者・閲覧者 分離版)
+ * 連絡帳アプリ (管理者・閲覧者 分離版 + 前日コピー)
  *
  * * 変更点:
  * - データ保存先を `class_notes/{date}` (共有) に変更
  * - 管理者 (d.a0807derude@gmail.com) のみ編集パネルを表示
  * - 閲覧者はプレビューと日付選択のみ可能
  * - 日付選択をヘッダー/メインエリアに移動
+ * - 前日の内容をコピーする機能を追加
  */
 
 // ----------------------------------------------------------------------
@@ -245,6 +246,36 @@ export default function RenrakuchoApp() {
     }
   };
 
+  const handleCopyPreviousDay = async () => {
+    if (!isAdmin || !confirm("現在表示しているページの内容を、前日のデータで上書きしますか？\n（現在の入力内容は消えてしまいます）")) return;
+
+    // 前日の日付を計算
+    const d = new Date(currentDate);
+    d.setDate(d.getDate() - 1);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    const previousDate = `${year}-${month}-${day}`;
+
+    try {
+      const docRef = doc(db, "class_notes", previousDate);
+      const docSnap = await getDoc(docRef);
+
+      if (docSnap.exists()) {
+        const prevData = docSnap.data().columns;
+        setColumns(prevData);
+        saveData(prevData); // 即保存
+        alert(`${previousDate} のデータをコピーしました！`);
+      } else {
+        alert(`${previousDate} のデータが見つかりませんでした。`);
+      }
+    } catch (error) {
+      console.error("Error copying previous day: ", error);
+      alert("前日のデータの取得に失敗しました。");
+    }
+  };
+
+
   // Handlers
   const handleLogin = async () => {
     try {
@@ -383,6 +414,16 @@ export default function RenrakuchoApp() {
         `}>
           {/* Content Area */}
           <div className="flex-1 overflow-y-auto p-4 space-y-6 pb-20 md:pb-4 relative">
+
+            {/* Copy Previous Day Button */}
+            <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 text-center">
+              <button
+                onClick={handleCopyPreviousDay}
+                className="text-xs font-bold text-indigo-600 hover:text-indigo-800 flex items-center justify-center gap-1 mx-auto py-1 px-3 border border-indigo-200 rounded hover:bg-indigo-50 transition"
+              >
+                <Copy size={12} /> 前日の内容をコピー
+              </button>
+            </div>
 
             {/* Form Inputs */}
             <section className="space-y-4">
