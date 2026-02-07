@@ -620,12 +620,18 @@ export default function RenrakuchoApp() {
                 <span>みんなの確認 ({checks.length})</span>
               </h4>
               <ul className="space-y-1">
-                {checks.map((c, i) => (
-                  <li key={i} className="text-sm text-slate-600 flex items-center gap-2">
-                    <CheckCircle size={12} className="text-emerald-500" />
-                    {c.name}
+                {isAdmin ? (
+                  checks.map((c, i) => (
+                    <li key={i} className="text-sm text-slate-600 flex items-center gap-2">
+                      <CheckCircle size={12} className="text-emerald-500" />
+                      {c.name}
+                    </li>
+                  ))
+                ) : (
+                  <li className="text-xs text-slate-400 py-2">
+                    ※ 個人情報保護のため、<br />管理者以外には名前を表示していません。
                   </li>
-                ))}
+                )}
               </ul>
             </div>
           </div>
@@ -710,11 +716,15 @@ export default function RenrakuchoApp() {
                 <div className="mt-4 border-t border-slate-100 pt-2">
                   <p className="text-xs text-slate-400 mb-1">みんなの確認 ({checks.length})</p>
                   <div className="flex flex-wrap gap-1">
-                    {checks.map((c, i) => (
-                      <span key={i} className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">
-                        {c.name}
-                      </span>
-                    ))}
+                    {isAdmin ? (
+                      checks.map((c, i) => (
+                        <span key={i} className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">
+                          {c.name}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-[10px] text-slate-400">※ 管理者のみ表示</span>
+                    )}
                   </div>
                 </div>
               </div>
