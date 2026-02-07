@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { BookOpen, Download, ArrowUp, ArrowDown, User, LogIn, LogOut, Loader2, Calendar, ChevronLeft, ChevronRight, Copy, CheckCircle, Stamp } from 'lucide-react';
+import { BookOpen, Download, ArrowUp, ArrowDown, User, LogIn, LogOut, Loader2, Calendar, ChevronLeft, ChevronRight, Copy, CheckCircle, Stamp, Eye } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
 import { auth, googleProvider, db } from './firebase';
 import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
@@ -574,6 +574,17 @@ export default function RenrakuchoApp() {
               >
                 <Download size={18} />
                 <span>PDFでダウンロード</span>
+              </button>
+            </div>
+
+            {/* Mobile: Floating Preview Button */}
+            <div className="md:hidden sticky bottom-4 z-50 flex justify-end pointer-events-none">
+              <button
+                onClick={() => setActiveTab('preview')}
+                className="pointer-events-auto bg-indigo-600 text-white px-5 py-3 rounded-full shadow-lg shadow-indigo-200 flex items-center gap-2 font-bold hover:bg-indigo-700 transition active:scale-95 border border-indigo-400"
+              >
+                <Eye size={20} />
+                <span>プレビュー</span>
               </button>
             </div>
           </div>
